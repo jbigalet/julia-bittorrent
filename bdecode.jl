@@ -2,14 +2,10 @@ module BDecode
 
 # works with byte array, to support UTF8
 function extract_string(s)
-    try
-        i = search(s,':')
-        n = parse(Int, s[1:i-1])
-        f = s[i+1:end]
-        return f[1:n], f[n+1:end]
-    catch e
-        error("Error: $s")
-    end
+    i = search(s,':')
+    n = parse(Int, s[1:i-1])
+    f = s[i+1:end]
+    return f[1:n], f[n+1:end]
 end
 
 function extract_int(s)
@@ -28,7 +24,7 @@ function extract_list(s)
 end
 
 function extract_dict(s)
-    dict = Dict()
+    dict = Dict{AbstractString,Any}()
     k,f = extract_element(s)
     while(k != nothing)
         v,f = extract_element(f)
