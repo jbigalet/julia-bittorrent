@@ -24,7 +24,7 @@ function extract_list(s)
 end
 
 function extract_dict(s)
-    dict = Dict()
+    dict = Dict{String,Any}()
     k,f = extract_element(s)
     while(k != nothing)
         v,f = extract_element(f)
