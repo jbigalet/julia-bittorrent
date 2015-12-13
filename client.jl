@@ -65,7 +65,7 @@ end
 import Base.connect
 function connect(p::Peer)
     p.conn = connect(p.addr, p.port)
-    println(p.conn, handshake)
+    print(p.conn, handshake)
     Base.wait_readnb(p.conn, 68)
     #assert(nb_available(p) >= 68)
     peer_handshake = readbytes(p.conn, 68)
@@ -86,7 +86,7 @@ function handlemsg(p::Peer)
 
     Base.wait_readnb(p.conn, 1)
     id = read(p.conn, Int8)
-    
+
     #choke
     if id == 0
         assert(len == 1)
@@ -113,11 +113,12 @@ function handlemsg(p::Peer)
 
     #have
     elseif id == 4
+        assert(len == 5)
         Base.wait_readnb(p.conn, len-1)
         idx = hton(read(p.conn, Int32))
         assert(idx >= 0 && idx < length(p.have))
         p.have[idx+1] #zero-based index
-        return "have " * idx
+        return "have $idx"
 
     #bitfield
     elseif id == 5
@@ -138,13 +139,56 @@ function handlemsg(p::Peer)
 
     #request
     elseif id == 6
-        return "request"
+        assert(len == 13)
+        index = hton(read(p.conn, Int32))
+        offset = hton(read(p.conn, Int32))
+        len = hton(read(p.conn, Int32))
+        #TODO handle request
+        return "request $index @ $offset, size: $len"
+
+    #piece
+    elseif id == 7
+        #TODO verify size of the block
+        index = hton(read(p.conn, Int32))
+        offset = hton(read(p.conn, Int32))
+        block = readbytes(p.conn, len-9)
+        #TODO handle block
+        return "piece $index @ $offset"
+
+    #cancel
+    elseif id == 8
+        assert(len == 13)
+        index = hton(read(p.conn, Int32))
+        offset = hton(read(p.conn, Int32))
+        len = hton(read(p.conn, Int32))
+        #TODO handle cancel
+        return "cancel $index @ $offset, size: $len"
+
+    #port
+    elseif id == 9
+        assert(len == 5)
+        port = hton(read(p.conn, Int32))
+        #TODO handle port switch
 
     else
         return "unknow =("
     end
 end
 
+import Base.send
+send(p::Peer, id, payload...)  = write(p.conn, ntoh(Int32(1+ (isempty(payload) ? 0 : sum(sizeof, payload)))), Int8(id), payload...)
+keepalive(p::Peer) = write(p.conn, )
+
+choke(p::Peer) = send(p, 0)
+unchoke(p::Peer) = send(p, 1)
+interested(p::Peer) = send(p, 2)
+notinterested(p::Peer) = send(p, 3)
+have(p::Peer, index) = send(p, 4, ntoh(Int32(index)))
+#bitfield(p::Peer, bitfield) = send(p, 5, bitfield) #TODO
+request(p::Peer, index, offset, len = 2^14) = send(p, 6, ntoh(Int32(index)), ntoh(Int32(offset)), ntoh(Int32(len)))
+#piece(p::Peer, index, offset, block) = send(p, 7, ntoh(Int32(index)), ntoh(Int32(offset)), block) #TODO
+cancel(p::Peer, index, offset, len = 2^14) = send(p, 8, ntoh(Int32(index)), ntoh(Int32(offset)), ntoh(Int32(len)))
+updateport(p::Peer, port) = send(p, 9, ntoh(Int32(port)))
 
 testpeer = Peer("192.168.1.86", 51413)
 connect(testpeer)
