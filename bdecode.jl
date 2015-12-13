@@ -16,7 +16,7 @@ end
 function extract_list(s)
     list = []
     el,f = extract_element(s)
-    while(el != nothing)
+    while el != nothing
         push!(list, el)
         el,f = extract_element(f)
     end
@@ -26,7 +26,7 @@ end
 function extract_dict(s)
     dict = Dict{AbstractString,Any}()
     k,f = extract_element(s)
-    while(k != nothing)
+    while k != nothing
         v,f = extract_element(f)
         dict[k] = v
         k,f = extract_element(f)
@@ -36,7 +36,7 @@ end
 
 function extract_element(s)
     if length(s) == 0
-        return nothing
+
     elseif s[1] == 'i'
         return extract_int(s[2:end])
     elseif s[1] == 'l'
