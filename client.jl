@@ -51,7 +51,7 @@ type Peer
             false,
             true,
             false,
-            [false for i in 1:Int(meta["meta"]["info"]["length"] / meta["meta"]["info"]["piece length"])]
+            [false for i in 1:ceil(Int, meta["meta"]["info"]["length"] / meta["meta"]["info"]["piece length"])]
         )
     end
 end
@@ -77,63 +77,72 @@ end
 
 function handlemsg(p::Peer)
     Base.wait_readnb(p.conn, 4)
-    len = read(c, Int32)
+    len = hton(read(p.conn, Int32))
     
     #keep-alive
     if len == 0
-        return
+        return "keep-alive"
     end
 
     Base.wait_readnb(p.conn, 1)
-    id = read(c, Int8)
+    id = read(p.conn, Int8)
     
     #choke
     if id == 0
         assert(len == 1)
         p.peer_choking = true
+        return "choke"
 
     #unchoke
     elseif id == 1
         assert(len == 1)
         p.peer_choking = false
+        return "unchoke"
 
     #interested
     elseif id == 2
         assert(len == 1)
         p.peer_interested = true
+        return "interested"
 
     #not interested
     elseif id == 3
         assert(len == 1)
         p.peer_interested = false
+        return "not interested"
 
     #have
     elseif id == 4
         Base.wait_readnb(p.conn, len-1)
-        idx = read(p.conn, Int32)
+        idx = hton(read(p.conn, Int32))
         assert(idx >= 0 && idx < length(p.have))
         p.have[idx+1] #zero-based index
+        return "have " * idx
 
     #bitfield
     elseif id == 5
         assert(len == 1+ceil(Int, length(p.have)/8))
         Base.wait_readnb(p.conn, len-1)
         for i in 1:len-1
-            n = read(p.conn, Int8)
+            n = bits(read(p.conn, UInt8))
             for j in 1:8
-                idx = 8*(i-1) + 9 - j
+                idx = 8*(i-1) + j
                 if idx <= length(p.have)
-                    p.have[idx] = n%2
+                    p.have[idx] = n[j] == '1'
                 else
-                    assert(n%2 == 0)
+                    assert(n[j] == '0')
                 end
-                n = div(n, 2)
             end
         end
+        return "bitfield"
 
     #request
     elseif id == 6
-        return
+        return "request"
+
+    else
+        return "unknow =("
+    end
 end
 
 
