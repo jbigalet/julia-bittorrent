@@ -110,10 +110,8 @@ function handlemsg(p::Peer)
     #have
     elseif id == 4
         Base.wait_readnb(p.conn, len-1)
-        idx = 0
-        for i in 1:len-1
-            idx = 256*idx + read(p.conn, Int8)
-        end
+        idx = read(p.conn, Int32)
+        assert(idx >= 0 && idx < length(p.have))
         p.have[idx+1] #zero-based index
 
     #bitfield
