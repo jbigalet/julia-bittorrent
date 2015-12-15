@@ -11,11 +11,46 @@ hex2url(h) = join(["%$(h[i:i+1])" for i in 1:2:length(h)])
 peerid = "jklmfdsqjklmfdsqjklm"
 port = 6888
 
+blocksize = 2^14
+
+type Piece
+    offset::Int
+    fullpiece::Vector{UInt8}
+    hash::AbstractString
+    missing_blocks::Set{Int}
+    blocks::Vector{Vector{UInt8}}
+    function Piece(offset, hash, piecesize)
+        nbblock = ceil(Int, piecesize/blocksize)
+        return new(
+            offset,
+            Vector{UInt8}(),
+            hash,
+            Set{Int}(1:nbblock),
+            [Vector{UInt8}() for i in 1:nbblock]
+        )
+    end
+end
+
+iscomplete(p::Piece) = isempty(p.missing_blocks)
+
+function addblock(p::Piece, offset, block)
+    p.blocks[div(offset,blocksize)+1] = block
+    setdiff!(p.missing_blocks, div(offset,blocksize)+1)
+    if iscomplete(p)
+        p.fullpiece = vcat(p.blocks...)
+        if sha1(p.fullpiece) != p.hash
+            #TODO handle wrong hash
+            println("Wrong hash in piece $(p.offset)")
+        end
+    end
+end
+
+
 type Torrent
     meta::Dict{AbstractString,Any}
     info_hash::AbstractString
-    piece_hashes::Vector{AbstractString}
     tracker_url::AbstractString
+    pieces::Vector{Piece}
 
     function Torrent(filepath)
         meta = BDecode.bdecode(readall(filepath))
@@ -23,14 +58,19 @@ type Torrent
 
         hexpieces = bytes2hex(convert(Vector{UInt8}, meta["info"]["pieces"]))
         piece_hashes = [hexpieces[i:i+39] for i in 1:40:sizeof(hexpieces)]
+        pieces = [Piece(i, piece_hashes[i], meta["info"]["piece length"]) for i in 1:length(piece_hashes)]
+        lastpiece_length = meta["info"]["length"] % meta["info"]["piece length"]
+        if lastpiece_length != 0
+            pieces[end] = Piece(length(piece_hashes), piece_hashes[end], lastpiece_length)
+        end
 
         tracker_url = "$(meta["announce"])?info_hash=$(hex2url(info_hash))&peer_id=$(peerid)&port=$(port)&uploaded=0&downloaded=0&left=$(meta["info"]["piece length"])&compact=1&no_peer_id=1&event=started"
 
         return new(
             meta,
             info_hash,
-            piece_hashes,
-            tracker_url
+            tracker_url,
+            pieces 
         )
     end
 end
@@ -68,7 +108,7 @@ type Peer
             false,
             true,
             false,
-            [false for i in 1:length(torrent.piece_hashes)]
+            [false for i in 1:length(torrent.pieces)]
         )
     end
 end
@@ -169,7 +209,7 @@ function handlemsg(p::Peer)
         index = hton(read(p.conn, Int32))
         offset = hton(read(p.conn, Int32))
         block = readbytes(p.conn, len-9)
-        #TODO handle block
+        addblock(torrent.pieces[index+1], offset, block)
         return "piece $index @ $offset"
 
     #cancel
@@ -202,10 +242,24 @@ interested(p::Peer) = send(p, 2)
 notinterested(p::Peer) = send(p, 3)
 have(p::Peer, index) = send(p, 4, ntoh(Int32(index)))
 #bitfield(p::Peer, bitfield) = send(p, 5, bitfield) #TODO
-request(p::Peer, index, offset, len = 2^14) = send(p, 6, ntoh(Int32(index)), ntoh(Int32(offset)), ntoh(Int32(len)))
+request(p::Peer, index, offset, len = blocksize) = send(p, 6, ntoh(Int32(index)), ntoh(Int32(offset)), ntoh(Int32(len)))
 #piece(p::Peer, index, offset, block) = send(p, 7, ntoh(Int32(index)), ntoh(Int32(offset)), block) #TODO
-cancel(p::Peer, index, offset, len = 2^14) = send(p, 8, ntoh(Int32(index)), ntoh(Int32(offset)), ntoh(Int32(len)))
+cancel(p::Peer, index, offset, len = blocksize) = send(p, 8, ntoh(Int32(index)), ntoh(Int32(offset)), ntoh(Int32(len)))
 updateport(p::Peer, port) = send(p, 9, ntoh(Int32(port)))
+
+#request full piece
+function request(p::Peer, index)
+    for i in torrent.pieces[index].missing_blocks
+        request(p, index-1, (i-1)*blocksize)
+    end
+end
+
+#request all pieces
+function request(p::Peer)
+    for i in 1:length(torrent.pieces)
+        request(p, i)
+    end
+end
 
 testpeer = Peer("192.168.1.86", 51413)
 connect(testpeer)
