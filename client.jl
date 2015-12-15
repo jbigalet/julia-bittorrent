@@ -11,19 +11,36 @@ hex2url(h) = join(["%$(h[i:i+1])" for i in 1:2:length(h)])
 peerid = "jklmfdsqjklmfdsqjklm"
 port = 6888
 
-function metainfo(filepath)
-    meta = BDecode.bdecode(readall(filepath))
-    info_hash = sha1(BEncode.bencode(meta["info"]))
-    tracker_url = "$(meta["announce"])?info_hash=$(hex2url(info_hash))&peer_id=$(peerid)&port=$(port)&uploaded=0&downloaded=0&left=$(meta["info"]["piece length"])&compact=1&no_peer_id=1&event=started"
-    return Dict{AbstractString,Any}("meta" => meta, "info_hash" => info_hash, "tracker_url" => tracker_url)
+type Torrent
+    meta::Dict{AbstractString,Any}
+    info_hash::AbstractString
+    piece_hashes::Vector{AbstractString}
+    tracker_url::AbstractString
+
+    function Torrent(filepath)
+        meta = BDecode.bdecode(readall(filepath))
+        info_hash = sha1(BEncode.bencode(meta["info"]))
+
+        hexpieces = bytes2hex(convert(Vector{UInt8}, meta["info"]["pieces"]))
+        piece_hashes = [hexpieces[i:i+39] for i in 1:40:sizeof(hexpieces)]
+
+        tracker_url = "$(meta["announce"])?info_hash=$(hex2url(info_hash))&peer_id=$(peerid)&port=$(port)&uploaded=0&downloaded=0&left=$(meta["info"]["piece length"])&compact=1&no_peer_id=1&event=started"
+
+        return new(
+            meta,
+            info_hash,
+            piece_hashes,
+            tracker_url
+        )
+    end
 end
 
-meta = metainfo("examples\\archlinux.torrent")
-#resp = BDecode.bdecode(bytestring(HTTPClient.get(meta["tracker_url"]).body))
+torrent = Torrent("examples\\archlinux.torrent")
+resp = BDecode.bdecode(bytestring(HTTPClient.get(torrent.tracker_url).body))
 
 protocol = "BitTorrent protocol"
-protocol_len = bytestring(hex2bytes(hex(sizeof(protocol))))
-handshake =  protocol_len * protocol * "\x00" ^ 8 * bytestring(hex2bytes(meta["info_hash"])) * peerid
+protocol_len = bytestring([convert(UInt8, sizeof(protocol))])
+handshake =  protocol_len * protocol * "\x00" ^ 8 * bytestring(hex2bytes(torrent.info_hash)) * peerid
 
 # parse peers
 #peers = readbytes(IOBuffer(resp["peers"]))
@@ -51,7 +68,7 @@ type Peer
             false,
             true,
             false,
-            [false for i in 1:ceil(Int, meta["meta"]["info"]["length"] / meta["meta"]["info"]["piece length"])]
+            [false for i in 1:length(torrent.piece_hashes)]
         )
     end
 end
@@ -70,7 +87,7 @@ function connect(p::Peer)
     #assert(nb_available(p) >= 68)
     peer_handshake = readbytes(p.conn, 68)
     assert(bytestring(peer_handshake[1:20]) == protocol_len * protocol) # check protocol
-    assert(bytestring(peer_handshake[29:48]) == bytestring(hex2bytes(meta["info_hash"]))) # check info_hash
+    assert(bytestring(peer_handshake[29:48]) == bytestring(hex2bytes(torrent.info_hash))) # check info_hash
     p.id = bytestring(peer_handshake[49:end])
     return p.id
 end
